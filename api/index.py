@@ -29,66 +29,74 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Global application instance
 ptb = None
 
-@app.on_event("startup")
-async def startup_event():
+async def get_ptb():
     global ptb
-    if not TELEGRAM_BOT_TOKEN:
-        print("Warning: TELEGRAM_BOT_TOKEN not found.")
-        return
+    if ptb is not None:
+        return ptb
         
-    # Build application
-    ptb = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    if not TELEGRAM_BOT_TOKEN:
+        print("CRITICAL: TELEGRAM_BOT_TOKEN is missing!")
+        return None
 
-    # Add all handlers
-    ptb.add_handler(CommandHandler("start", start))
-    ptb.add_handler(CommandHandler("help", help_command))
-    ptb.add_handler(CommandHandler("mydata", mydata))
+    try:
+        # Build application
+        new_ptb = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    reg_conv = ConversationHandler(
-        entry_points=[CommandHandler("register", register_start)],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
-            DOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_dob)],
-            ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_address)],
-            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_email)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_phone)],
-        },
-        fallbacks=[CommandHandler("stop", cancel_register)]
-    )
-    ptb.add_handler(reg_conv)
+        # Add all handlers
+        new_ptb.add_handler(CommandHandler("start", start))
+        new_ptb.add_handler(CommandHandler("help", help_command))
+        new_ptb.add_handler(CommandHandler("mydata", mydata))
 
-    del_conv = ConversationHandler(
-        entry_points=[CommandHandler("delete", delete_start)],
-        states={
-            CONFIRM_DELETE: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_delete)]
-        },
-        fallbacks=[CommandHandler("stop", global_stop)]
-    )
-    ptb.add_handler(del_conv)
-    
-    chat_conv = ConversationHandler(
-        entry_points=[CommandHandler("chat", chat_start)],
-        states={
-            CHAT_MODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, chat_message)]
-        },
-        fallbacks=[CommandHandler("stop", chat_stop)]
-    )
-    ptb.add_handler(chat_conv)
-    
-    ptb.add_handler(CommandHandler("stop", global_stop))
+        reg_conv = ConversationHandler(
+            entry_points=[CommandHandler("register", register_start)],
+            states={
+                NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
+                DOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_dob)],
+                ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_address)],
+                EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_email)],
+                PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_phone)],
+            },
+            fallbacks=[CommandHandler("stop", cancel_register)]
+        )
+        new_ptb.add_handler(reg_conv)
 
-    await ptb.initialize()
-    print("Telegram Bot Application initialized!")
+        del_conv = ConversationHandler(
+            entry_points=[CommandHandler("delete", delete_start)],
+            states={
+                CONFIRM_DELETE: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_delete)]
+            },
+            fallbacks=[CommandHandler("stop", global_stop)]
+        )
+        new_ptb.add_handler(del_conv)
+        
+        chat_conv = ConversationHandler(
+            entry_points=[CommandHandler("chat", chat_start)],
+            states={
+                CHAT_MODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, chat_message)]
+            },
+            fallbacks=[CommandHandler("stop", chat_stop)]
+        )
+        new_ptb.add_handler(chat_conv)
+        
+        new_ptb.add_handler(CommandHandler("stop", global_stop))
+
+        await new_ptb.initialize()
+        ptb = new_ptb
+        return ptb
+    except Exception as e:
+        print(f"Failed to initialize PTB: {e}")
+        return None
 
 @app.post("/api/webhook")
 async def telegram_webhook(request: Request):
-    if ptb is None:
-        return Response("Bot not initialized", status_code=500)
+    bot_app = await get_ptb()
+    if bot_app is None:
+        return Response("Bot not initialized. Check Environment Variables.", status_code=500)
     
     try:
         body = await request.json()
-        update = Update.de_json(body, ptb.bot)
-        await ptb.process_update(update)
+        update = Update.de_json(body, bot_app.bot)
+        await bot_app.process_update(update)
         return Response(status_code=200)
     except Exception as e:
         print(f"Error processing update: {e}")
@@ -100,12 +108,12 @@ async def root():
 
 @app.get("/api/set-webhook")
 async def set_webhook(url: str):
-    """
-    Utility endpoint to easily set the webhook URL.
-    Usage: Visit /api/set-webhook?url=https://your-vercel-domain.vercel.app/api/webhook
-    """
-    if not ptb:
+    bot_app = await get_ptb()
+    if not bot_app:
         return {"error": "Bot not initialized. Check your TELEGRAM_BOT_TOKEN"}
     
-    success = await ptb.bot.set_webhook(url)
-    return {"status": "Webhook set", "success": success, "url": url}
+    try:
+        success = await bot_app.bot.set_webhook(url)
+        return {"status": "Webhook set", "success": success, "url": url}
+    except Exception as e:
+        return {"error": str(e)}

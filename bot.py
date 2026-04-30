@@ -17,7 +17,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-from aiohttp import web
+# from aiohttp import web (Removed for Vercel compatibility)
 
 from ai_prompt import SYSTEM_PROMPT
 import database as db

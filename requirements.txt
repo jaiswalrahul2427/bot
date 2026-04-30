@@ -5,3 +5,5 @@ httpx
 fastapi
 uvicorn
 cryptography
+requests
+aiohttp
