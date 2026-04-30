@@ -1,0 +1,6 @@
+python-telegram-bot>=20.0
+google-generativeai
+cryptography
+requests
+python-dotenv
+aiosqlite
