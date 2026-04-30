@@ -1,6 +1,7 @@
-python-telegram-bot>=20.0
+python-telegram-bot
 google-generativeai
-cryptography
-requests
 python-dotenv
-aiosqlite
+httpx
+fastapi
+uvicorn
+cryptography

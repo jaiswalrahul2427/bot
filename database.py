@@ -1,19 +1,23 @@
-import aiosqlite
 import os
-from cryptography.fernet import Fernet
 import json
+import httpx
+from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
 load_dotenv()
 
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
-    # Fallback for dev purposes if key is missing, though README says they should generate it.
     ENCRYPTION_KEY = Fernet.generate_key()
 
 fernet = Fernet(ENCRYPTION_KEY)
 
-DB_PATH = "customers.db"
+KV_REST_API_URL = os.getenv("KV_REST_API_URL")
+KV_REST_API_TOKEN = os.getenv("KV_REST_API_TOKEN")
+
+headers = {
+    "Authorization": f"Bearer {KV_REST_API_TOKEN}",
+}
 
 def encrypt_data(data: str) -> str:
     if data is None:
@@ -29,55 +33,58 @@ def decrypt_data(data: str) -> str:
         return "[Error: Could not decrypt]"
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS customers (
-                telegram_id TEXT PRIMARY KEY,
-                name TEXT,
-                dob TEXT,
-                address TEXT,
-                email TEXT,
-                phone TEXT
-            )
-        ''')
-        await db.commit()
+    # Vercel KV doesn't require table initialization
+    pass
 
 async def save_customer(telegram_id: str, name: str, dob: str, address: str, email: str, phone: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            INSERT INTO customers (telegram_id, name, dob, address, email, phone)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(telegram_id) DO UPDATE SET
-                name=excluded.name,
-                dob=excluded.dob,
-                address=excluded.address,
-                email=excluded.email,
-                phone=excluded.phone
-        ''', (
-            telegram_id,
-            encrypt_data(name),
-            encrypt_data(dob),
-            encrypt_data(address),
-            encrypt_data(email),
-            encrypt_data(phone)
-        ))
-        await db.commit()
+    if not KV_REST_API_URL:
+        print("Missing KV_REST_API_URL! Cannot save data.")
+        return
+
+    encrypted_data = {
+        "name": encrypt_data(name),
+        "dob": encrypt_data(dob),
+        "address": encrypt_data(address),
+        "email": encrypt_data(email),
+        "phone": encrypt_data(phone)
+    }
+    
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"{KV_REST_API_URL}/set/customer:{telegram_id}",
+            headers=headers,
+            json=json.dumps(encrypted_data)
+        )
 
 async def get_customer(telegram_id: str) -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('SELECT name, dob, address, email, phone FROM customers WHERE telegram_id = ?', (telegram_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
+    if not KV_REST_API_URL:
+        return None
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{KV_REST_API_URL}/get/customer:{telegram_id}",
+            headers=headers
+        )
+        
+        if response.status_code == 200:
+            result = response.json().get("result")
+            if result:
+                data = json.loads(result)
                 return {
-                    "name": decrypt_data(row[0]),
-                    "dob": decrypt_data(row[1]),
-                    "address": decrypt_data(row[2]),
-                    "email": decrypt_data(row[3]),
-                    "phone": decrypt_data(row[4])
+                    "name": decrypt_data(data.get("name")),
+                    "dob": decrypt_data(data.get("dob")),
+                    "address": decrypt_data(data.get("address")),
+                    "email": decrypt_data(data.get("email")),
+                    "phone": decrypt_data(data.get("phone"))
                 }
-            return None
+    return None
 
 async def delete_customer(telegram_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('DELETE FROM customers WHERE telegram_id = ?', (telegram_id,))
-        await db.commit()
+    if not KV_REST_API_URL:
+        return
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"{KV_REST_API_URL}/del/customer:{telegram_id}",
+            headers=headers
+        )
